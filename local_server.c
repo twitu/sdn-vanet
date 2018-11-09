@@ -5,45 +5,43 @@
 #include <pthread.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <math.h>
+#include <string.h>
 
 #include "node.h"
 
 #define PORT 8888
+#define APPLICATION 8887
 #define SLEEP 1
 #define LIMIT 3
+#define RANGE_SQUARE 400
+#define PACKET_SIZE 512
+
+// global variables
+Node table;
+int id;
+sem_t* mutex;
 
 void die(char* s);
 void* broadcast_data(void* args);
 void* recv_data(void* args);
 void* print_node(Node data, int total);
 
-struct arg {
-    Node data;
-    sem_t* mutex;
-    int seq;
-};
-
 int main(int argc, char* argv[]) {
 
     // processing arguments and creating data table
     if (argc!=2) die("invalid arguments");
-    int id = atoi(argv[1]) - 1;
-    Node data = (Node) calloc(LIMIT, sizeof(node));
+    id = atoi(argv[1]) - 1;
+    table = (Node) calloc(LIMIT, sizeof(node));
 
     // create semaphore to ensure sequential access to shared memory
-    sem_t* mutex = (sem_t*) malloc(sizeof(sem_t));
+    mutex = (sem_t*) malloc(sizeof(sem_t));
     sem_init(mutex, 0, 1);
-
-    // argument for passing to threads
-    struct arg* Arg = (struct arg*) malloc(sizeof(struct arg));
-    Arg->data = data;
-    Arg->seq = id;
-    Arg->mutex = mutex;
 
     // create threads for sending and receiving data
     pthread_t thread1, thread2;
-    int iret1 = pthread_create(&thread1, NULL, broadcast_data, (void*) Arg);
-    int iret2 = pthread_create(&thread2, NULL, recv_data, (void*) Arg);
+    int iret1 = pthread_create(&thread1, NULL, broadcast_data, NULL);
+    int iret2 = pthread_create(&thread2, NULL, recv_data, NULL);
 
     pthread_join(thread1, NULL);
     pthread_join(thread2, NULL); 
@@ -72,9 +70,6 @@ void* broadcast_data(void* args) {
     // seed for random position
     srand(time(0));
     
-    Node table = data->data;
-    sem_t* mutex = data->mutex;
-    int id = data->seq;
     // send data after fixed time intervals
     while (1) {
         // sync across thread
@@ -90,11 +85,6 @@ void* broadcast_data(void* args) {
 }
 
 void* recv_data (void* args) {
-    struct arg* data = (struct arg*) args;
-
-    // interpret arguments
-    Node table = data->data;
-    sem_t* mutex = data->mutex;
 
     // initializing variables for UDP communication
     struct sockaddr_in *sock_dest, *sock_recv;
@@ -103,8 +93,9 @@ void* recv_data (void* args) {
     sock_recv = (struct sockaddr_in*) calloc(1, sizeof(struct sockaddr_in));
 
     // receiving socket
-    int conn_recv;
+    int conn_recv, enable = 1;
     if ((conn_recv = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket()");
+    if ((setsockopt(conn_recv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1)) die("setsockopt()");
 
     // receiving address
     sock_recv->sin_family = AF_INET;
