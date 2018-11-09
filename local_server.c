@@ -21,11 +21,17 @@
 Node table;
 int id;
 sem_t* mutex;
+struct sockaddr_in* app_addr;
+int app_sock;
 
 void die(char* s);
 void* broadcast_data(void* args);
 void* recv_data(void* args);
 void* print_node(Node data, int total);
+void send_next_hop(int dest, char* buffer);
+double calculate_square_distance(int dest);
+void* application_receiver();
+void* application_user_input();
 
 int main(int argc, char* argv[]) {
 
@@ -38,15 +44,114 @@ int main(int argc, char* argv[]) {
     mutex = (sem_t*) malloc(sizeof(sem_t));
     sem_init(mutex, 0, 1);
 
+    // initialize socket for sending application messages
+    app_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    // initialize socket address structure for application
+    app_addr = calloc(1, sizeof(struct sockaddr_in));
+    app_addr->sin_family = AF_INET;
+    app_addr->sin_port = htons(APPLICATION);
+
     // create threads for sending and receiving data
-    pthread_t thread1, thread2;
+    pthread_t thread1, thread2, thread3, thread4;
     int iret1 = pthread_create(&thread1, NULL, broadcast_data, NULL);
     int iret2 = pthread_create(&thread2, NULL, recv_data, NULL);
+    int iret3 = pthread_create(&thread3, NULL, application_receiver, NULL);
+    int iret4 = pthread_create(&thread4, NULL, application_user_input, NULL);
 
     pthread_join(thread1, NULL);
     pthread_join(thread2, NULL); 
+    pthread_join(thread3, NULL); 
+    pthread_join(thread4, NULL); 
     exit(0);
 }
+
+// calculate square of distance between this node (id) and destination node
+double calculate_square_distance(int dest) {
+    sem_wait(mutex);
+    double delta_x = (table[id].x - table[dest].x)*(table[id].x - table[dest].x);
+    double delta_y = (table[id].y - table[dest].y)*(table[id].y - table[dest].y);
+    sem_post(mutex);
+    return delta_x + delta_y;
+}
+
+void send_next_hop(int dest, char* buffer) {
+
+    int hop_id = -1;
+    if (calculate_square_distance(dest) < RANGE_SQUARE) {
+        hop_id = dest; // if dest is single hop away send
+    } else {
+        double dist, max_dist_in_range = 0;
+        for (int i = 0; i < LIMIT; i++) {
+            if (i==id || i == dest) continue; // skip self, skip destination as it has been checked
+            dist = calculate_square_distance(id);
+            if (dist < RANGE_SQUARE && dist > max_dist_in_range) {
+                // find node max distance away but within range
+                max_dist_in_range = dist;
+                hop_id = i;
+            }
+        }
+    }
+
+    // drop message if next hop not available
+    if (hop_id == -1) {
+        #ifdef DEBUG
+        printf("dropped packet destined for %d containing message:\n%s\n", dest, &buffer[sizeof(int)]);
+        #endif
+        return;
+    }
+
+    switch (hop_id) {
+            case 1: app_addr->sin_addr.s_addr = inet_addr("10.0.0.1"); break;
+            case 2: app_addr->sin_addr.s_addr = inet_addr("10.0.0.2"); break;
+            case 3: app_addr->sin_addr.s_addr = inet_addr("10.0.0.3"); break;
+    }
+
+    sendto(app_sock, buffer, PACKET_SIZE, 0, (struct sockaddr*) app_addr, sizeof(struct sockaddr));
+}
+
+void* application_receiver() {
+    int app_recv_sock, enable = 1;
+    if ((app_recv_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket()");
+    if ((setsockopt(app_recv_sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1)) die("setsockopt()");
+
+    struct sockaddr_in* app_recv_addr;
+    app_recv_addr = calloc(1, sizeof(struct sockaddr_in));
+    app_recv_addr->sin_family = AF_INET;
+    app_recv_addr->sin_port = htons(APPLICATION);
+    app_recv_addr->sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(app_recv_sock, (struct sockaddr*) app_recv_addr, sizeof(struct sockaddr)) == -1) die("bind()");
+    
+    int dest_id;
+    char buffer[PACKET_SIZE];
+    while (1) {
+        if (recvfrom(app_recv_sock, buffer, PACKET_SIZE, 0, NULL, 0) == -1) die("recfrom()");
+
+        dest_id = ((int*) buffer)[0];
+        if (dest_id == id) printf("%s\n", &buffer[sizeof(int)]);
+        else send_next_hop(dest_id, buffer);
+    }
+}
+
+
+void* application_user_input() {
+    while (1) {
+        char buffer[PACKET_SIZE];
+        int dest_id;
+        printf("enter message in %d character:\n", 508); // (PACKET_SIZE) 512 - (int) 4  = 508
+        scanf("%s", &buffer[sizeof(int)]);
+        printf("enter destination id:\n");
+        scanf("%d", &dest_id);
+        #ifdef DEBUG
+        dest_id = 2;
+        #endif
+        ((int*) buffer)[0] = dest_id;
+
+        send_next_hop(dest_id, buffer);
+    }
+}
+
 
 void* broadcast_data(void* args) {
     struct arg* data = (struct arg*) args;
@@ -108,7 +213,7 @@ void* recv_data (void* args) {
     void* buffer = malloc(sizeof(node)*LIMIT);
     if (bind(conn_recv, (struct sockaddr*) sock_recv, sock_len) == -1) die("bind()");
     while (1) {
-        if (recvfrom(conn_recv, buffer, sizeof(node)*LIMIT, 0, (struct sockaddr*) sock_recv, &sock_len) == -1) die("recvfrom()");
+        if (recvfrom(conn_recv, buffer, sizeof(node)*LIMIT, 0, NULL, 0) == -1) die("recvfrom()");
         new_data = (Node) buffer;
 
         sem_wait(mutex);
