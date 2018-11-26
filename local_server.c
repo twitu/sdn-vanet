@@ -146,11 +146,12 @@ void* application_user_input() {
         scanf("%s", &buffer[sizeof(int)]);
         printf("enter destination id:\n");
         scanf("%d", &dest_id);
-        #ifdef DEBUG
-        dest_id = 3;
-        #endif
         dest_id = dest_id - 1;  // to ensure zero indexing in position table
         ((int*) buffer)[0] = dest_id;
+
+        #ifdef DEBUG
+        printf("packet:\n%d %s", ((int*) buffer)[0], &buffer[sizeof(int)]);
+        #endif
 
         send_next_hop(dest_id, buffer);
     }
@@ -234,7 +235,7 @@ void* recv_data(void* args) {
                 table[i].timestamp.tv_sec = new_data[i].timestamp.tv_sec;
             }
         }
-        #ifdef DEBUG
+        #ifdef INFO
         print_node(table, LIMIT);
         printf("\n");
         fflush(stdout);
