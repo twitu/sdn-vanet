@@ -15,7 +15,7 @@
 #define APPLICATION 8887
 #define SLEEP 1
 #define LIMIT 3
-#define RANGE_SQUARE 400
+#define RANGE_SQUARE 2500
 #define PACKET_SIZE 512
 
 // global variables
@@ -102,6 +102,11 @@ void send_next_hop(int dest, char* buffer) {
         printf("dropped packet destined for %d containing message:\n%s\n", dest, &buffer[sizeof(int)]);
         #endif
         return;
+    } else {
+        #ifdef DEBUG
+        printf("relay node: %d\n, destination node: %d\n, next hop: %d\n", id, dest, hop_id);
+        printf("distance: %f\n", max_dist_in_range);
+        #endif
     }
 
     switch (hop_id) {
@@ -150,7 +155,7 @@ void* application_user_input() {
         ((int*) buffer)[0] = dest_id;
 
         #ifdef DEBUG
-        printf("packet:\n%d %s", ((int*) buffer)[0], &buffer[sizeof(int)]);
+        printf("\npacket:\n%d\n %s\n", ((int*) buffer)[0], &buffer[sizeof(int)]);
         #endif
 
         send_next_hop(dest_id, buffer);
