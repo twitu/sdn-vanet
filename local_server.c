@@ -4,6 +4,7 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/shm.h>
 #include <arpa/inet.h>
 #include <math.h>
 #include <string.h>
@@ -24,19 +25,18 @@ sem_t* mutex;
 struct sockaddr_in* app_addr;
 int app_sock;
 
-void die(char* s);
 void* broadcast_data(void* args);
 void* recv_data(void* args);
 void* print_node(Node data, int total);
 void send_next_hop(int dest, char* buffer);
-double calculate_square_distance(int dest);
+double calculate_square_distance(int src, int dest);
 void* application_receiver();
 void* application_user_input();
 
 int main(int argc, char* argv[]) {
 
     // processing arguments and creating data table
-    if (argc!=2) die("invalid arguments");
+    if (argc!=2) perror("invalid arguments");
     id = atoi(argv[1]) - 1;
     table = (Node) calloc(LIMIT, sizeof(node));
 
@@ -67,26 +67,29 @@ int main(int argc, char* argv[]) {
 }
 
 // calculate square of distance between this node (id) and destination node
-double calculate_square_distance(int dest) {
+double calculate_square_distance(int src, int dest) {
     sem_wait(mutex);
-    double delta_x = (table[id].x - table[dest].x)*(table[id].x - table[dest].x);
-    double delta_y = (table[id].y - table[dest].y)*(table[id].y - table[dest].y);
+    double delta_x = (table[src].x - table[dest].x)*(table[src].x - table[dest].x);
+    double delta_y = (table[src].y - table[dest].y)*(table[src].y - table[dest].y);
     sem_post(mutex);
     return delta_x + delta_y;
 }
 
 void send_next_hop(int dest, char* buffer) {
 
-    int hop_id = -1;
-    if (calculate_square_distance(dest) < RANGE_SQUARE) {
+    int i, hop_id = -1;
+    double dist, max_dist_in_range = calculate_square_distance(id, dest);
+    if (max_dist_in_range < RANGE_SQUARE) {
         hop_id = dest; // if dest is single hop away send
     } else {
-        double dist, max_dist_in_range = 0;
-        for (int i = 0; i < LIMIT; i++) {
-            if (i==id || i == dest) continue; // skip self, skip destination as it has been checked
-            dist = calculate_square_distance(id);
-            if (dist < RANGE_SQUARE && dist > max_dist_in_range) {
-                // find node max distance away but within range
+        for (i = 0; i < LIMIT; i++) {
+            // skip self, skip destination as it has been checked
+            // also skip node if out of range
+            if (i==id || i == dest || calculate_square_distance(i, id) > RANGE_SQUARE) continue;
+            // consider only nodes within range of relay node
+            dist = calculate_square_distance(i, dest);
+            if (dist < max_dist_in_range) {
+                // find node min distance from destination node
                 max_dist_in_range = dist;
                 hop_id = i;
             }
@@ -102,9 +105,9 @@ void send_next_hop(int dest, char* buffer) {
     }
 
     switch (hop_id) {
-            case 1: app_addr->sin_addr.s_addr = inet_addr("10.0.0.1"); break;
-            case 2: app_addr->sin_addr.s_addr = inet_addr("10.0.0.2"); break;
-            case 3: app_addr->sin_addr.s_addr = inet_addr("10.0.0.3"); break;
+            case 0: app_addr->sin_addr.s_addr = inet_addr("10.0.0.1"); break;
+            case 1: app_addr->sin_addr.s_addr = inet_addr("10.0.0.2"); break;
+            case 2: app_addr->sin_addr.s_addr = inet_addr("10.0.0.3"); break;
     }
 
     sendto(app_sock, buffer, PACKET_SIZE, 0, (struct sockaddr*) app_addr, sizeof(struct sockaddr));
@@ -112,8 +115,8 @@ void send_next_hop(int dest, char* buffer) {
 
 void* application_receiver() {
     int app_recv_sock, enable = 1;
-    if ((app_recv_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket()");
-    if ((setsockopt(app_recv_sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1)) die("setsockopt()");
+    if ((app_recv_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) perror("socket()");
+    if ((setsockopt(app_recv_sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1)) perror("setsockopt()");
 
     struct sockaddr_in* app_recv_addr;
     app_recv_addr = calloc(1, sizeof(struct sockaddr_in));
@@ -121,12 +124,12 @@ void* application_receiver() {
     app_recv_addr->sin_port = htons(APPLICATION);
     app_recv_addr->sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (bind(app_recv_sock, (struct sockaddr*) app_recv_addr, sizeof(struct sockaddr)) == -1) die("bind()");
+    if (bind(app_recv_sock, (struct sockaddr*) app_recv_addr, sizeof(struct sockaddr)) == -1) perror("bind()");
     
     int dest_id;
     char buffer[PACKET_SIZE];
     while (1) {
-        if (recvfrom(app_recv_sock, buffer, PACKET_SIZE, 0, NULL, 0) == -1) die("recfrom()");
+        if (recvfrom(app_recv_sock, buffer, PACKET_SIZE, 0, NULL, 0) == -1) perror("recvfrom()");
 
         dest_id = ((int*) buffer)[0];
         if (dest_id == id) printf("%s\n", &buffer[sizeof(int)]);
@@ -144,8 +147,9 @@ void* application_user_input() {
         printf("enter destination id:\n");
         scanf("%d", &dest_id);
         #ifdef DEBUG
-        dest_id = 2;
+        dest_id = 3;
         #endif
+        dest_id = dest_id - 1;  // to ensure zero indexing in position table
         ((int*) buffer)[0] = dest_id;
 
         send_next_hop(dest_id, buffer);
@@ -163,33 +167,37 @@ void* broadcast_data(void* args) {
 
     // sending socket
     int conn, broadcast_opt = 1;
-    if ((conn = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket()");
+    if ((conn = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) perror("socket()");
     // allow socket to perform broadcast
-    if (setsockopt(conn, SOL_SOCKET, SO_BROADCAST, &broadcast_opt, sizeof(broadcast_opt)) == -1) die("setsockopt()");
+    if (setsockopt(conn, SOL_SOCKET, SO_BROADCAST, &broadcast_opt, sizeof(broadcast_opt)) == -1) perror("setsockopt()");
 
     // destination address
     sock_dest->sin_family = AF_INET;
     sock_dest->sin_port = htons(PORT);
     sock_dest->sin_addr.s_addr = inet_addr("10.0.0.255");
 
-    // seed for random position
-    srand(time(0));
+    // intialzed shared memory and position variables
+    int seg_id = shmget(6789, 4096, IPC_CREAT);
+    char* shared_mem = (char*) shmat(seg_id, 0, 0);
+    char* offset_mem = &shared_mem[(id-1)*10];
+    char x[5], y[5];
     
     // send data after fixed time intervals
     while (1) {
+        sscanf(shared_mem, "%s %s", x, y);
         // sync across thread
         sem_wait(mutex);
         // generate random position
-        table[id].x = rand();
-        table[id].y = rand();
+        table[id].x = atoi(x);
+        table[id].y = atoi(y);
         gettimeofday(&table[id].timestamp, NULL);
-        if (sendto(conn, table, sizeof(node)*LIMIT, 0, (struct sockaddr*) sock_dest, sock_len) == -1) die("sendto()");
+        if (sendto(conn, table, sizeof(node)*LIMIT, 0, (struct sockaddr*) sock_dest, sock_len) == -1) perror("sendto()");
         sem_post(mutex);
         sleep(SLEEP);
     }
 }
 
-void* recv_data (void* args) {
+void* recv_data(void* args) {
 
     // initializing variables for UDP communication
     struct sockaddr_in *sock_dest, *sock_recv;
@@ -199,8 +207,8 @@ void* recv_data (void* args) {
 
     // receiving socket
     int conn_recv, enable = 1;
-    if ((conn_recv = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) die("socket()");
-    if ((setsockopt(conn_recv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1)) die("setsockopt()");
+    if ((conn_recv = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) perror("socket()");
+    if ((setsockopt(conn_recv, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) == -1)) perror("setsockopt()");
 
     // receiving address
     sock_recv->sin_family = AF_INET;
@@ -211,9 +219,9 @@ void* recv_data (void* args) {
     Node new_data;
     int i;
     void* buffer = malloc(sizeof(node)*LIMIT);
-    if (bind(conn_recv, (struct sockaddr*) sock_recv, sock_len) == -1) die("bind()");
+    if (bind(conn_recv, (struct sockaddr*) sock_recv, sock_len) == -1) perror("bind()");
     while (1) {
-        if (recvfrom(conn_recv, buffer, sizeof(node)*LIMIT, 0, NULL, 0) == -1) die("recvfrom()");
+        if (recvfrom(conn_recv, buffer, sizeof(node)*LIMIT, 0, NULL, 0) == -1) perror("recvfrom()");
         new_data = (Node) buffer;
 
         sem_wait(mutex);
@@ -240,9 +248,4 @@ void* print_node(Node data, int total) {
     for (i = 0; i < total; i++) {
         printf("id: %d, position: (%d, %d), time: %ld.%06ld\n", i+1, data[i].x, data[i].y, data[i].timestamp.tv_sec, data[i].timestamp.tv_usec);
     }
-}
-
-void die(char* s) {
-    perror(s);
-    exit(1);
 }
