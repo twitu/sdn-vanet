@@ -15,7 +15,7 @@
 #define APPLICATION 8887
 #define SLEEP 1
 #define LIMIT 3
-#define RANGE_SQUARE 2500
+#define RANGE_SQUARE 3600
 #define PACKET_SIZE 512
 
 // global variables
@@ -144,21 +144,33 @@ void* application_receiver() {
 
 
 void* application_user_input() {
+    char buffer[PACKET_SIZE];
+    int dest_id;
     while (1) {
-        char buffer[PACKET_SIZE];
-        int dest_id;
-        printf("enter message in %d character:\n", 508); // (PACKET_SIZE) 512 - (int) 4  = 508
-        scanf("%s", &buffer[sizeof(int)]);
-        printf("enter destination id:\n");
-        scanf("%d", &dest_id);
-        dest_id = dest_id - 1;  // to ensure zero indexing in position table
-        ((int*) buffer)[0] = dest_id;
+        int option;
+        printf("choose an option by entering the number\n1: send message to a node\n2 (debug): print position table\n3 (debug): calculate distance between 2 nodes\n");
+        scanf("%d", &option);
 
-        #ifdef DEBUG
-        printf("\npacket:\n%d\n %s\n", ((int*) buffer)[0], &buffer[sizeof(int)]);
-        #endif
-
-        send_next_hop(dest_id, buffer);
+        if (option == 1) {
+            printf("enter message in %d character:\n", 508); // (PACKET_SIZE) 512 - (int) 4  = 508
+            scanf("%s", &buffer[sizeof(int)]);
+            printf("enter destination id:\n");
+            scanf("%d", &dest_id);
+            dest_id = dest_id - 1;  // to ensure zero indexing in position table
+            ((int*) buffer)[0] = dest_id;
+            send_next_hop(dest_id, buffer);
+        } else if (option == 2) {
+            #ifdef DEBUG
+            print_node(table, LIMIT);
+            #endif
+        } else if (option == 3) {
+            #ifdef DEBUG
+            int src, dest;
+            printf("enter source and destination nodes:\n");
+            scanf("%d %d", &src, &dest);
+            printf("distance between %d and %d is %f", src, dest, calculate_square_distance(src, dest));
+            #endif
+        }
     }
 }
 
