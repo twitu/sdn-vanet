@@ -195,14 +195,15 @@ void* broadcast_data(void* args) {
     sock_dest->sin_addr.s_addr = inet_addr("10.0.0.255");
 
     // intialzed shared memory and position variables
+    // note x, y, z coordinate is written to shared memory as 4 ascii characters followed by blank (e.g. "0017 ")
     int seg_id = shmget(6789, 4096, IPC_CREAT);
     char* shared_mem = (char*) shmat(seg_id, 0, 0);
-    char* offset_mem = &shared_mem[(id-1)*10];
+    char* offset_mem = &shared_mem[(id)*15];
     char x[5], y[5];
     
     // send data after fixed time intervals
     while (1) {
-        sscanf(shared_mem, "%s %s", x, y);
+        sscanf(offset_mem, "%s %s ", x, y);
         // sync across thread
         sem_wait(mutex);
         // generate random position
