@@ -56,9 +56,9 @@ class Topology(Thread):
         net.configureWifiNodes()
 
         info("*** Creating links\n")
-        net.addLink(self.stations[0], cls=mesh, ssid='meshNet', channel=5)
-        net.addLink(self.stations[1], cls=mesh, ssid='meshNet', channel=5)
-        net.addLink(self.stations[2], cls=mesh, ssid='meshNet', channel=5)
+        net.addLink(self.stations[0], cls=adhoc, ssid='adhocNet', mode='g', channel=5)
+        net.addLink(self.stations[1], cls=adhoc, ssid='adhocNet', mode='g', channel=5)
+        net.addLink(self.stations[2], cls=adhoc, ssid='adhocNet', mode='g', channel=5)
 
         net.plotGraph(max_x=100, max_y=100)
         net.startMobility(time=0, model='RandomDirection', max_x=100, max_y=100, seed=20)
