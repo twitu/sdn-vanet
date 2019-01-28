@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 #include "node.h"
 
@@ -137,7 +138,19 @@ void* application_receiver() {
         if (recvfrom(app_recv_sock, buffer, PACKET_SIZE, 0, NULL, 0) == -1) perror("recvfrom()");
 
         dest_id = ((int*) buffer)[0];
-        if (dest_id == id) printf("%s\n", &buffer[sizeof(int)]);
+        FILE* fptr1 = fopen("node1.log","w");
+        FILE* fptr2 = fopen("node2.log","w");
+        FILE* fptr3 = fopen("node3.log","w");
+        char buff[20];
+        struct tm *sTm;
+        time_t now = time (0);
+        sTm = gmtime (&now);
+        strftime (buff, sizeof(buff), "%H:%M:%S", sTm);
+        if (dest_id == id) {
+        if(dest_id==1) fprintf(fptr1,"%d %s %s\n", dest_id,&buffer[sizeof(int)],buff);
+        if(dest_id==2) fprintf(fptr2,"%d %s %s\n", dest_id,&buffer[sizeof(int)],buff);
+        if(dest_id==3) fprintf(fptr3,"%d %s %s\n", dest_id,&buffer[sizeof(int)],buff);
+        }
         else send_next_hop(dest_id, buffer);
     }
 }
@@ -158,6 +171,7 @@ void* application_user_input() {
             scanf("%d", &dest_id);
             dest_id = dest_id - 1;  // to ensure zero indexing in position table
             ((int*) buffer)[0] = dest_id;
+            ((int*) buffer[1]) = packet_id;
             send_next_hop(dest_id, buffer);
         } else if (option == 2) {
             #ifdef DEBUG
