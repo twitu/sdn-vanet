@@ -32,6 +32,7 @@ void send_next_hop(int dest, char* buffer);
 double calculate_square_distance(int src, int dest);
 void* application_receiver();
 void* application_user_input();
+FILE* log_file;
 
 int main(int argc, char* argv[]) {
 
@@ -51,6 +52,11 @@ int main(int argc, char* argv[]) {
     app_addr = calloc(1, sizeof(struct sockaddr_in));
     app_addr->sin_family = AF_INET;
     app_addr->sin_port = htons(APPLICATION);
+
+    // initialize logging file
+    char name[10];
+    sprintf(name, "log.%d.txt", id);
+    log_file = fopen(name, "w");
 
     // create threads for sending and receiving data
     pthread_t thread1, thread2, thread3, thread4;
@@ -115,6 +121,9 @@ void send_next_hop(int dest, char* buffer) {
             case 2: app_addr->sin_addr.s_addr = inet_addr("10.0.0.3"); break;
     }
 
+    struct timeval stamp;
+    gettimeofday(&stamp, NULL);
+    fprintf(log_file, "%d %d %d %ld.%06ld\n", ((int*) buffer)[0], ((int*) buffer)[1], ((int*) buffer)[2], stamp.tv_sec, stamp.tv_usec);
     sendto(app_sock, buffer, PACKET_SIZE, 0, (struct sockaddr*) app_addr, sizeof(struct sockaddr));
 }
 
@@ -136,7 +145,7 @@ void* application_receiver() {
     while (1) {
         if (recvfrom(app_recv_sock, buffer, PACKET_SIZE, 0, NULL, 0) == -1) perror("recvfrom()");
 
-        dest_id = ((int*) buffer)[0];
+        dest_id = ((int*) buffer)[1];
         if (dest_id == id) printf("%s\n", &buffer[sizeof(int)]);
         else send_next_hop(dest_id, buffer);
     }
@@ -146,18 +155,21 @@ void* application_receiver() {
 void* application_user_input() {
     char buffer[PACKET_SIZE];
     int dest_id;
+    int packet_index = 0;
     while (1) {
         int option;
         printf("choose an option by entering the number\n1: send message to a node\n2 (debug): print position table\n3 (debug): calculate distance between 2 nodes\n");
         scanf("%d", &option);
 
         if (option == 1) {
-            printf("enter message in %d character:\n", 508); // (PACKET_SIZE) 512 - (int) 4  = 508
-            scanf("%s", &buffer[sizeof(int)]);
+            printf("enter message in %d character:\n", 500); // (PACKET_SIZE) 512 - (int) 12  = 500
+            scanf("%s", &buffer[sizeof(int)*3]);
             printf("enter destination id:\n");
             scanf("%d", &dest_id);
             dest_id = dest_id - 1;  // to ensure zero indexing in position table
-            ((int*) buffer)[0] = dest_id;
+            ((int*) buffer)[0] = id;
+            ((int*) buffer)[1] = dest_id;
+            ((int*) buffer)[2] = packet_index++;
             send_next_hop(dest_id, buffer);
         } else if (option == 2) {
             #ifdef DEBUG
