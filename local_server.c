@@ -24,6 +24,7 @@ int id;
 sem_t* mutex;
 struct sockaddr_in* app_addr;
 int app_sock;
+int subnet_ip;
 
 void* broadcast_data(void* args);
 void* recv_data(void* args);
@@ -32,7 +33,7 @@ void send_next_hop(int dest, char* buffer);
 double calculate_square_distance(int src, int dest);
 void* application_receiver();
 void* application_user_input();
-FILE* log_file;
+void* bulk_input();
 
 int main(int argc, char* argv[]) {
 
@@ -53,10 +54,8 @@ int main(int argc, char* argv[]) {
     app_addr->sin_family = AF_INET;
     app_addr->sin_port = htons(APPLICATION);
 
-    // initialize logging file
-    char name[10];
-    sprintf(name, "log.%d.txt", id);
-    log_file = fopen(name, "w");
+    // initialize subnet base ip for hop calculation
+    subnet_ip = inet_addr("10.0.0.0");
 
     // create threads for sending and receiving data
     pthread_t thread1, thread2, thread3, thread4;
@@ -66,9 +65,9 @@ int main(int argc, char* argv[]) {
     int iret4 = pthread_create(&thread4, NULL, application_user_input, NULL);
 
     pthread_join(thread1, NULL);
-    pthread_join(thread2, NULL); 
-    pthread_join(thread3, NULL); 
-    pthread_join(thread4, NULL); 
+    pthread_join(thread2, NULL);
+    pthread_join(thread3, NULL);
+    pthread_join(thread4, NULL);
     exit(0);
 }
 
@@ -115,15 +114,13 @@ void send_next_hop(int dest, char* buffer) {
         #endif
     }
 
-    switch (hop_id) {
-            case 0: app_addr->sin_addr.s_addr = inet_addr("10.0.0.1"); break;
-            case 1: app_addr->sin_addr.s_addr = inet_addr("10.0.0.2"); break;
-            case 2: app_addr->sin_addr.s_addr = inet_addr("10.0.0.3"); break;
-    }
+    // calculate next hop ip, all calculations being done in network byte order
+    app_addr->sin_addr.s_addr = subnet_ip + htonl(hop_id);
 
     struct timeval stamp;
     gettimeofday(&stamp, NULL);
-    fprintf(log_file, "%d %d %d %ld.%06ld\n", ((int*) buffer)[0], ((int*) buffer)[1], ((int*) buffer)[2], stamp.tv_sec, stamp.tv_usec);
+    // print sender destination packet_index timestamp
+    printf("%d %d %d %ld.%06ld\n", ((int*) buffer)[0] + 1, ((int*) buffer)[1] + 1, ((int*) buffer)[2], stamp.tv_sec, stamp.tv_usec);
     sendto(app_sock, buffer, PACKET_SIZE, 0, (struct sockaddr*) app_addr, sizeof(struct sockaddr));
 }
 
@@ -151,6 +148,25 @@ void* application_receiver() {
     }
 }
 
+// TODO: change gets to more secure method of input processing
+void* bulk_input() {
+    int packet_index = 0;
+    sleep(3); // allow all nodes to be setup
+    char dest[5];
+    // read destination and message from input file
+    while (1) {
+        gets(dest);
+        int dest_id = atoi(dest) - 1;
+        if (dest_id < 0) return;
+        char message[512];
+        gets(&message[sizeof(int)*3]);
+        if (dest_id == id) continue; // don't send message to self
+        ((int*) message)[0] = 0;
+        ((int*) message)[1] = dest_id;
+        ((int*) message)[2] = packet_index++;
+        send_next_hop(dest_id, message);
+    }
+}
 
 void* application_user_input() {
     char buffer[PACKET_SIZE];

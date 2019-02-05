@@ -126,7 +126,7 @@ sta1 ----- sta2"""
 import sys
 
 from mininet.log import setLogLevel, info
-from mn_wifi.link import wmediumd, mesh
+from mn_wifi.link import wmediumd, mesh, adhoc
 from mn_wifi.cli import CLI_wifi
 from mn_wifi.net import Mininet_wifi
 from mn_wifi.wmediumdConnector import interference
@@ -170,9 +170,9 @@ class Topology(Thread):
         net.configureWifiNodes()
 
         info("*** Creating links\n")
-        net.addLink(self.stations[0], cls=mesh, ssid='meshNet', channel=5)
-        net.addLink(self.stations[1], cls=mesh, ssid='meshNet', channel=5)
-        net.addLink(self.stations[2], cls=mesh, ssid='meshNet', channel=5)
+        net.addLink(self.stations[0], cls=adhoc, ssid='adhocNet', mode='g', channel=5)
+        net.addLink(self.stations[1], cls=adhoc, ssid='adhocNet', mode='g', channel=5)
+        net.addLink(self.stations[2], cls=adhoc, ssid='adhocNet', mode='g', channel=5)
 
         net.plotGraph(max_x=100, max_y=100)
 
