@@ -14,17 +14,19 @@
 #define PORT 8888
 #define APPLICATION 8887
 #define SLEEP 1
-#define LIMIT 3
+#define LIMIT 32  // size of position table is limited by standard UDP packet of size 512
 #define RANGE_SQUARE 3600
 #define PACKET_SIZE 512
 
 // global variables
 Node table;
 int id;
+int total;
 sem_t* mutex;
 struct sockaddr_in* app_addr;
 int app_sock;
 int subnet_ip;
+FILE* log_file;
 
 void* broadcast_data(void* args);
 void* recv_data(void* args);
@@ -38,9 +40,12 @@ void* bulk_input();
 int main(int argc, char* argv[]) {
 
     // processing arguments and creating data table
-    if (argc!=2) perror("invalid arguments");
-    id = atoi(argv[1]) - 1;
-    table = (Node) calloc(LIMIT, sizeof(node));
+    if (argc!=3) perror("invalid arguments");
+    id = atoi(argv[1]) - 1; // id of node
+    if (id >= LIMIT) return;  // limited by size of table
+    total = atoi(argv[2]); // total possible nodes should not exceed limit of table
+    if (total >= LIMIT) return;
+    table = (Node) calloc(total, sizeof(node));
 
     // create semaphore to ensure sequential access to shared memory
     mutex = (sem_t*) malloc(sizeof(sem_t));
@@ -55,15 +60,24 @@ int main(int argc, char* argv[]) {
     app_addr->sin_port = htons(APPLICATION);
 
     // initialize subnet base ip for hop calculation
-    subnet_ip = inet_addr("10.0.0.0");
+    subnet_ip = inet_addr("10.0.0.1");
+
+    // initialize log file
+    char name[10];
+    sprintf(name, "log.%d.txt", id + 1);
+    log_file = fopen(name, "w");
 
     // create threads for sending and receiving data
     pthread_t thread1, thread2, thread3, thread4;
     int iret1 = pthread_create(&thread1, NULL, broadcast_data, NULL);
     int iret2 = pthread_create(&thread2, NULL, recv_data, NULL);
     int iret3 = pthread_create(&thread3, NULL, application_receiver, NULL);
+    #ifdef BULK
+    int iret4 = pthread_create(&thread4, NULL, bulk_input, NULL);
+    #endif
+    #ifdef DEBUG
     int iret4 = pthread_create(&thread4, NULL, application_user_input, NULL);
-
+    #endif
     pthread_join(thread1, NULL);
     pthread_join(thread2, NULL);
     pthread_join(thread3, NULL);
@@ -87,7 +101,7 @@ void send_next_hop(int dest, char* buffer) {
     if (max_dist_in_range < RANGE_SQUARE) {
         hop_id = dest; // if dest is single hop away send
     } else {
-        for (i = 0; i < LIMIT; i++) {
+        for (i = 0; i < total; i++) {
             // skip self, skip destination as it has been checked
             // also skip node if out of range
             if (i==id || i == dest || calculate_square_distance(i, id) > RANGE_SQUARE) continue;
@@ -120,7 +134,8 @@ void send_next_hop(int dest, char* buffer) {
     struct timeval stamp;
     gettimeofday(&stamp, NULL);
     // print sender destination packet_index timestamp
-    printf("%d %d %d %ld.%06ld\n", ((int*) buffer)[0] + 1, ((int*) buffer)[1] + 1, ((int*) buffer)[2], stamp.tv_sec, stamp.tv_usec);
+    fprintf(log_file, "%d %d %d %ld.%06ld\n", ((int*) buffer)[0] + 1, ((int*) buffer)[1] + 1, ((int*) buffer)[2], stamp.tv_sec, stamp.tv_usec);
+    fflush(log_file);
     sendto(app_sock, buffer, PACKET_SIZE, 0, (struct sockaddr*) app_addr, sizeof(struct sockaddr));
 }
 
@@ -143,15 +158,27 @@ void* application_receiver() {
         if (recvfrom(app_recv_sock, buffer, PACKET_SIZE, 0, NULL, 0) == -1) perror("recvfrom()");
 
         dest_id = ((int*) buffer)[1];
-        if (dest_id == id) printf("%s\n", &buffer[sizeof(int)]);
-        else send_next_hop(dest_id, buffer);
+        if (dest_id == id) {
+            #ifdef BULK
+            struct timeval stamp;
+            gettimeofday(&stamp, NULL);
+            // print sender destination packet_index timestamp
+            fprintf(log_file, "%d %d %d %ld.%06ld\n", ((int*) buffer)[0] + 1, ((int*) buffer)[1] + 1, ((int*) buffer)[2], stamp.tv_sec, stamp.tv_usec);
+            fflush(log_file);
+            #endif
+            #ifdef DEBUG
+            printf("%s\n", &buffer[sizeof(int)*3]);
+            #endif
+        } else {
+            send_next_hop(dest_id, buffer);
+        }
     }
 }
 
 // TODO: change gets to more secure method of input processing
 void* bulk_input() {
     int packet_index = 0;
-    sleep(3); // allow all nodes to be setup
+    sleep(2); // allow all nodes to be setup
     char dest[5];
     // read destination and message from input file
     while (1) {
@@ -161,7 +188,7 @@ void* bulk_input() {
         char message[512];
         gets(&message[sizeof(int)*3]);
         if (dest_id == id) continue; // don't send message to self
-        ((int*) message)[0] = 0;
+        ((int*) message)[0] = id;
         ((int*) message)[1] = dest_id;
         ((int*) message)[2] = packet_index++;
         send_next_hop(dest_id, message);
@@ -189,7 +216,7 @@ void* application_user_input() {
             send_next_hop(dest_id, buffer);
         } else if (option == 2) {
             #ifdef DEBUG
-            print_node(table, LIMIT);
+            print_node(table, total);
             #endif
         } else if (option == 3) {
             #ifdef DEBUG
@@ -202,7 +229,7 @@ void* application_user_input() {
     }
 }
 
-
+// TODO: add record aging here
 void* broadcast_data(void* args) {
     struct arg* data = (struct arg*) args;
 
@@ -238,7 +265,7 @@ void* broadcast_data(void* args) {
         table[id].x = atoi(x);
         table[id].y = atoi(y);
         gettimeofday(&table[id].timestamp, NULL);
-        if (sendto(conn, table, sizeof(node)*LIMIT, 0, (struct sockaddr*) sock_dest, sock_len) == -1) perror("sendto()");
+        if (sendto(conn, table, sizeof(node)*total, 0, (struct sockaddr*) sock_dest, sock_len) == -1) perror("sendto()");
         sem_post(mutex);
         sleep(SLEEP);
     }
@@ -265,15 +292,15 @@ void* recv_data(void* args) {
     // receive and process data
     Node new_data;
     int i;
-    void* buffer = malloc(sizeof(node)*LIMIT);
+    void* buffer = malloc(sizeof(node)*total);
     if (bind(conn_recv, (struct sockaddr*) sock_recv, sock_len) == -1) perror("bind()");
     while (1) {
-        if (recvfrom(conn_recv, buffer, sizeof(node)*LIMIT, 0, NULL, 0) == -1) perror("recvfrom()");
+        if (recvfrom(conn_recv, buffer, sizeof(node)*total, 0, NULL, 0) == -1) perror("recvfrom()");
         new_data = (Node) buffer;
 
         sem_wait(mutex);
         // check and update table data
-        for (i = 0; i < LIMIT; i++) {
+        for (i = 0; i < total; i++) {
             if (table[i].timestamp.tv_sec < new_data[i].timestamp.tv_sec) {
                 table[i].x = new_data[i].x;
                 table[i].y = new_data[i].y;
@@ -281,11 +308,6 @@ void* recv_data(void* args) {
                 table[i].timestamp.tv_sec = new_data[i].timestamp.tv_sec;
             }
         }
-        #ifdef INFO
-        print_node(table, LIMIT);
-        printf("\n");
-        fflush(stdout);
-        #endif
         sem_post(mutex);
     }
 }

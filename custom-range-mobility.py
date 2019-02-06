@@ -25,7 +25,7 @@ import sysv_ipc
 
 class Topology(Thread):
 
-    def __int__(self):
+    def __init__(self):
         Thread.__init__(self)
         self.mobility = None
         self.stations = None
@@ -75,7 +75,7 @@ class Topology(Thread):
 
 class Position(Thread):
 
-    def __int__(self, stations):
+    def __init__(self):
         Thread.__init__(self)
 
     def assign(self, stations):

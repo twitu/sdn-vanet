@@ -4,10 +4,9 @@ import string
 
 if __name__ == "__main__":
     N = int(sys.argv[1])  # number of routers to simulate
-    M = int(sys.argv[2])  # number of types of files to create
     L = int(sys.argv[3])  # number of packets to be generated per file
 
-    for i in range(1, M, 1):
+    for i in range(1, N+1, 1):
         with open("traffic.{}.data".format(i), "w") as f:
             for j in range(L):
                 # generate random lower case strings of length 30
