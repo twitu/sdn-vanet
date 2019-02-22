@@ -182,11 +182,11 @@ void* bulk_input() {
     char dest[5];
     // read destination and message from input file
     while (1) {
-        gets(dest);
+        fgets(dest,10,stdin);
         int dest_id = atoi(dest) - 1;
         if (dest_id < 0) return;
         char message[512];
-        gets(&message[sizeof(int)*3]);
+        fgets(&message[sizeof(int)*3],515,stdin);
         if (dest_id == id) continue; // don't send message to self
         ((int*) message)[0] = id;
         ((int*) message)[1] = dest_id;
